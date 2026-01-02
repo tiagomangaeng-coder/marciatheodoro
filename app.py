@@ -17,6 +17,7 @@ st.markdown("""
     .intro-subtitle { font-size: 2rem; color: #a68a64; letter-spacing: 10px; text-transform: uppercase; animation: blink 1.5s infinite; }
     .footer { position: fixed; left: 0; bottom: 0; width: 100%; background-color: #fcfaf8; color: #8b5e3c; text-align: center; padding: 10px; font-weight: bold; z-index: 100; }
     .stTabs [aria-selected="true"] { background-color: #8b5e3c !important; color: white !important; }
+    [data-testid="stMetricValue"] { color: #8b5e3c !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -55,7 +56,6 @@ def load_data():
     except:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# --- 4. FUNÇÕES DE PDF ---
 def gerar_pdf_financeiro(df_cli, df_parc, tipo="Consolidado"):
     pdf = FPDF()
     pdf.add_page()
@@ -63,10 +63,8 @@ def gerar_pdf_financeiro(df_cli, df_parc, tipo="Consolidado"):
     pdf.set_text_color(139, 94, 60)
     pdf.cell(0, 10, f"RELATÓRIO FINANCEIRO {tipo.upper()}", ln=True, align='C')
     pdf.set_font("helvetica", '', 10)
-    pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 10, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align='C')
     pdf.ln(5)
-
     if tipo == "Consolidado":
         pdf.cell(80, 10, "Cliente", 1); pdf.cell(50, 10, "WhatsApp", 1); pdf.cell(60, 10, "Pendente (R$)", 1, 1)
         for _, cli in df_cli.iterrows():
@@ -75,11 +73,10 @@ def gerar_pdf_financeiro(df_cli, df_parc, tipo="Consolidado"):
                 pdf.cell(80, 10, str(cli['nome']), 1); pdf.cell(50, 10, str(cli['telefone']), 1); pdf.cell(60, 10, f"{dev:,.2f}", 1, 1)
     else:
         for _, cli in df_cli.iterrows():
-            parc_cli = df_parc[df_parc['cliente_id'] == cli['id']].sort_values('data_vencimento') if not df_parc.empty else pd.DataFrame()
+            par_cli = df_parc[df_parc['cliente_id'] == cli['id']].sort_values('data_vencimento') if not df_parc.empty else pd.DataFrame()
             if not parc_cli.empty:
-                pdf.set_font("helvetica", 'B', 12); pdf.set_text_color(139, 94, 60)
-                pdf.cell(0, 10, f"Cliente: {cli['nome']}", ln=True)
-                pdf.set_text_color(0, 0, 0); pdf.set_font("helvetica", '', 9)
+                pdf.set_font("helvetica", 'B', 12); pdf.set_text_color(139, 94, 60); pdf.cell(0, 10, f"Cliente: {cli['nome']}", ln=True)
+                pdf.set_font("helvetica", '', 9); pdf.set_text_color(0, 0, 0)
                 for _, p in parc_cli.iterrows():
                     dt = pd.to_datetime(p['data_vencimento']).strftime('%d/%m/%Y')
                     status = "PAGO" if p['pago'] else "PENDENTE"
@@ -87,13 +84,75 @@ def gerar_pdf_financeiro(df_cli, df_parc, tipo="Consolidado"):
                 pdf.ln(5)
     return bytes(pdf.output())
 
-# --- 5. CARREGAMENTO ---
+# --- 4. CARREGAMENTO ---
 df_v, df_c, df_p, df_par = load_data()
 
-# --- 6. INTERFACE POR ABAS ---
-tab_venda, tab_financeiro, tab_clientes, tab_estoque, tab_dash = st.tabs(["🛒 Venda", "📉 Financeiro", "👤 Clientes", "📦 Estoque", "📊 Dashboard"])
+# --- 5. INTERFACE POR ABAS ---
+tab_dash, tab_venda, tab_financeiro, tab_clientes, tab_estoque = st.tabs(["📊 Dashboard", "🛒 Venda", "📉 Financeiro", "👤 Clientes", "📦 Estoque"])
 
-# --- ABA VENDAS ---
+# --- ABA DASHBOARD (COMPLETA E DELICADA) ---
+with tab_dash:
+    st.header("📊 Inteligência de Negócio")
+    
+    # Filtro de Período Lateral ou Superior
+    with st.container():
+        col_f1, col_f2 = st.columns(2)
+        data_inicio = col_f1.date_input("Início do Período", value=date.today() - timedelta(days=30))
+        data_fim = col_f2.date_input("Fim do Período", value=date.today() + timedelta(days=90))
+    
+    if not df_v.empty:
+        # Filtragem de Dados
+        df_v['data_dt'] = pd.to_datetime(df_v['data']).dt.date
+        df_v_filtrado = df_v[(df_v['data_dt'] >= data_inicio) & (df_v['data_dt'] <= data_fim)]
+        
+        df_par['venc_dt'] = pd.to_datetime(df_par['data_vencimento']).dt.date
+        df_par_filtrado = df_par[(df_par['venc_dt'] >= data_inicio) & (df_par['venc_dt'] <= data_fim)]
+
+        # Métricas Principais
+        m1, m2, m3 = st.columns(3)
+        total_vendas = df_v_filtrado['valor'].sum()
+        ja_recebido = df_par_filtrado[df_par_filtrado['pago'] == True]['valor_parcela'].sum()
+        a_receber = df_par_filtrado[df_par_filtrado['pago'] == False]['valor_parcela'].sum()
+        
+        m1.metric("Faturamento no Período", f"R$ {total_vendas:,.2f}")
+        m2.metric("Total Já Recebido", f"R$ {ja_recebido:,.2f}")
+        m3.metric("Contas a Receber (Futuro)", f"R$ {a_receber:,.2f}")
+        
+        st.divider()
+        
+        # Gráficos Delicados
+        g1, g2 = st.columns([2, 1])
+        
+        with g1:
+            st.subheader("📈 Previsão de Entradas (Fluxo de Caixa)")
+            # Agrupar parcelas por mês/ano para ver o futuro
+            df_par['Mês/Ano'] = pd.to_datetime(df_par['data_vencimento']).dt.strftime('%m/%Y')
+            fluxo_futuro = df_par[df_par['pago'] == False].groupby('Mês/Ano')['valor_parcela'].sum().reset_index()
+            if not fluxo_futuro.empty:
+                fig_fluxo = px.bar(fluxo_futuro, x='Mês/Ano', y='valor_parcela', 
+                                   labels={'valor_parcela': 'Valor a Receber (R$)'},
+                                   color_discrete_sequence=['#a68a64'])
+                fig_fluxo.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="#8b5e3c")
+                st.plotly_chart(fig_fluxo, use_container_width=True)
+            else:
+                st.info("Nenhuma parcela futura pendente para o período.")
+
+        with g2:
+            st.subheader("💳 Métodos de Pagamento")
+            fig_pie = px.pie(df_v_filtrado, values='valor', names='metodo_pagamento', 
+                             color_discrete_sequence=['#8b5e3c', '#a68a64', '#d4a373', '#e9edc9'])
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        st.divider()
+        st.subheader("🏆 Itens mais Vendidos")
+        # Pequena análise de texto dos itens vendidos
+        if not df_v_filtrado.empty:
+            st.dataframe(df_v_filtrado[['data', 'item', 'valor', 'metodo_pagamento']], use_container_width=True)
+    else:
+        st.info("Aguardando vendas para gerar os gráficos.")
+
+# --- ABA VENDAS (MANTENDO SUA CORREÇÃO DE ESTOQUE) ---
 with tab_venda:
     st.header("🛍️ Realizar Venda")
     c1, col_carrinho = st.columns([1, 1.5])
@@ -108,7 +167,7 @@ with tab_venda:
                 if qt_v <= peca['quantidade_estoque']:
                     st.session_state.carrinho.append({"cod": peca['codigo'], "nome": peca['nome'], "qtd": int(qt_v), "pr": float(pr_u), "tot": float(pr_u * qt_v)})
                     st.rerun()
-                else: st.error("Estoque baixo!")
+                else: st.error(f"Estoque insuficiente! Disponível: {int(peca['quantidade_estoque'])}")
     with col_carrinho:
         if st.session_state.carrinho:
             st.table(pd.DataFrame(st.session_state.carrinho)[['nome', 'qtd', 'pr', 'tot']])
@@ -132,84 +191,60 @@ with tab_venda:
                     st.session_state.carrinho = []; st.success("Venda salva!"); time.sleep(1); st.rerun()
         else: st.info("Carrinho vazio.")
 
-# --- ABA FINANCEIRO (CORREÇÃO DA EXPORTAÇÃO AQUI) ---
+# --- ABA FINANCEIRO ---
 with tab_financeiro:
     st.header("📉 Gestão Financeira")
-    
-    # 1. Relatórios Gerais (Consolidado ou Completo de todos)
-    st.subheader("📋 Relatórios de Todos os Clientes")
+    st.subheader("📋 Relatórios Gerais")
     if not df_c.empty:
-        tipo_r = st.radio("Escolha o tipo de relatório geral:", ["Consolidado", "Completo"], horizontal=True, key="geral_r")
-        btn_pdf_geral = gerar_pdf_financeiro(df_c, df_par, tipo_r)
-        st.download_button(f"📥 Baixar Relatório Geral ({tipo_r})", data=btn_pdf_geral, file_name=f"financeiro_geral_{tipo_r.lower()}.pdf", mime="application/pdf")
-    
+        tipo_r = st.radio("Tipo de relatório:", ["Consolidado", "Completo"], horizontal=True)
+        st.download_button(f"📥 Baixar Relatório ({tipo_r})", data=gerar_pdf_financeiro(df_c, df_par, tipo_r), file_name="financeiro.pdf")
     st.divider()
-
-    # 2. Relatórios e Baixas por Cliente Individual
-    st.subheader("👤 Extrato e Baixa por Cliente")
-    ops_cli = ["--"] + list(df_c['nome'].unique()) if not df_c.empty else ["--"]
-    cli_f = st.selectbox("Selecione o Cliente para detalhamento", ops_cli)
-    
+    cli_f = st.selectbox("Selecione o Cliente para detalhamento", ["--"] + list(df_c['nome'].unique()) if not df_c.empty else ["--"])
     if cli_f != "--":
-        # Filtro de dados do cliente selecionado
+        pdf_ind = gerar_pdf_financeiro(df_c[df_c['nome'] == cli_f], df_par, "Completo")
+        st.download_button(f"📥 Baixar Extrato de {cli_f}", data=pdf_ind, file_name=f"extrato_{cli_f}.pdf")
         df_f = pd.merge(df_par, df_c[['id', 'nome']], left_on='cliente_id', right_on='id', suffixes=('_p', '_c'))
         df_cli_p = df_f[df_f['nome'] == cli_f].sort_values('data_vencimento')
-        
-        # Botão para exportar Completo do cliente selecionado
-        pdf_individual = gerar_pdf_financeiro(df_c[df_c['nome'] == cli_f], df_par, "Completo")
-        st.download_button(f"📥 Baixar Extrato Completo de {cli_f}", data=pdf_individual, file_name=f"extrato_{cli_f.replace(' ', '_')}.pdf", mime="application/pdf")
-        
-        st.write(f"**Situação de {cli_f}:**")
         for _, r in df_cli_p.iterrows():
             c1, c2, c3 = st.columns([3, 1, 1])
             dt_br = pd.to_datetime(r['data_vencimento']).strftime('%d/%m/%Y')
-            status_icon = "✅" if r['pago'] else "⏳"
-            c1.write(f"{status_icon} Parc {r['numero_parcela']} - {dt_br} - R$ {r['valor_parcela']:.2f}")
+            c1.write(f"{'✅' if r['pago'] else '⏳'} Parc {r['numero_parcela']} - {dt_br} - R$ {r['valor_parcela']:.2f}")
             if not r['pago'] and c2.button("Baixa", key=f"bx_{r['id_p']}"):
                 supabase.table("parcelas").update({"pago": True}).eq("id", int(r['id_p'])).execute(); st.rerun()
             if c3.button("🗑️", key=f"del_p_{r['id_p']}"):
                 supabase.table("parcelas").delete().eq("id", int(r['id_p'])).execute(); st.rerun()
 
-# --- DEMAIS ABAS ---
+# --- ABAS CLIENTES E ESTOQUE (CONTROLE TOTAL) ---
 with tab_clientes:
-    st.header("👤 Cadastro de Clientes")
-    with st.form("cad_cli", clear_on_submit=True):
+    st.header("👤 Clientes")
+    with st.form("c_cli"):
         n, t, cp = st.text_input("Nome"), st.text_input("WhatsApp"), st.text_input("CPF")
         if st.form_submit_button("Salvar"):
             if n: supabase.table("clientes").insert({"nome": n, "telefone": t, "cpf": cp}).execute(); st.rerun()
-    if not df_c.empty:
-        for _, cli in df_c.iterrows():
-            with st.expander(f"Editar: {cli['nome']}"):
-                en = st.text_input("Nome", cli['nome'], key=f"cn_{cli['id']}")
-                et = st.text_input("Whats", cli['telefone'], key=f"ct_{cli['id']}")
-                ec = st.text_input("CPF", cli.get('cpf', ''), key=f"cc_{cli['id']}")
-                if st.button("💾 Atualizar", key=f"cu_{cli['id']}"):
-                    supabase.table("clientes").update({"nome": en, "telefone": et, "cpf": ec}).eq("id", int(cli['id'])).execute(); st.rerun()
-                if st.button("🗑️ Excluir", key=f"cd_{cli['id']}"):
-                    supabase.table("clientes").delete().eq("id", int(cli['id'])).execute(); st.rerun()
+    for _, cli in df_c.iterrows():
+        with st.expander(f"Editar: {cli['nome']}"):
+            en = st.text_input("Nome", cli['nome'], key=f"cn_{cli['id']}")
+            et = st.text_input("Whats", cli['telefone'], key=f"ct_{cli['id']}")
+            ec = st.text_input("CPF", cli.get('cpf', ''), key=f"cc_{cli['id']}")
+            if st.button("💾 Atualizar", key=f"cu_{cli['id']}"):
+                supabase.table("clientes").update({"nome": en, "telefone": et, "cpf": ec}).eq("id", int(cli['id'])).execute(); st.rerun()
+            if st.button("🗑️ Excluir", key=f"cd_{cli['id']}"):
+                supabase.table("clientes").delete().eq("id", int(cli['id'])).execute(); st.rerun()
 
 with tab_estoque:
     st.header("📦 Estoque")
     with st.form("cad_est"):
         e1, e2, e3, e4 = st.columns(4)
-        cod_p = e1.text_input("Cód"); nome_p = e2.text_input("Peça"); prec_p = e3.number_input("Preço"); qtd_p = e4.number_input("Qtd")
+        c_p = e1.text_input("Cód"); n_p = e2.text_input("Peça"); pr_p = e3.number_input("Preço"); q_p = e4.number_input("Qtd")
         if st.form_submit_button("Cadastrar"):
-            if cod_p: supabase.table("produtos").insert({"codigo": str(cod_p), "nome": str(nome_p), "preco_venda": float(prec_p), "quantidade_estoque": int(qtd_p)}).execute(); st.rerun()
-    if not df_p.empty:
-        for _, pr in df_p.iterrows():
-            with st.expander(f"{pr['codigo']} - {pr['nome']}"):
-                n_p = st.text_input("Nome", pr['nome'], key=f"p_n_{pr['id']}")
-                q_p = st.number_input("Estoque", value=int(pr['quantidade_estoque']), key=f"p_q_{pr['id']}")
-                if st.button("💾 Salvar", key=f"p_u_{pr['id']}"):
-                    supabase.table("produtos").update({"nome": n_p, "quantidade_estoque": int(q_p)}).eq("id", int(pr['id'])).execute(); st.rerun()
-                if st.button("🗑️ Deletar", key=f"p_d_{pr['id']}"):
-                    supabase.table("produtos").delete().eq("id", int(pr['id'])).execute(); st.rerun()
-
-with tab_dash:
-    st.header("📊 Dashboard")
-    if not df_v.empty:
-        st.metric("Faturamento Total", f"R$ {df_v['valor'].sum():,.2f}")
-        df_v['data_br'] = pd.to_datetime(df_v['data']).dt.strftime('%d/%m/%Y')
-        st.plotly_chart(px.bar(df_v, x='data_br', y='valor', title="Vendas por Dia", color_discrete_sequence=['#8b5e3c']), use_container_width=True)
+            if c_p: supabase.table("produtos").insert({"codigo": str(c_p), "nome": str(n_p), "preco_venda": float(pr_p), "quantidade_estoque": int(q_p)}).execute(); st.rerun()
+    for _, pr in df_p.iterrows():
+        with st.expander(f"{pr['codigo']} - {pr['nome']}"):
+            en_p = st.text_input("Nome", pr['nome'], key=f"p_n_{pr['id']}")
+            eq_p = st.number_input("Estoque", value=int(pr['quantidade_estoque']), key=f"p_q_{pr['id']}")
+            if st.button("💾 Salvar", key=f"p_u_{pr['id']}"):
+                supabase.table("produtos").update({"nome": en_p, "quantidade_estoque": int(eq_p)}).eq("id", int(pr['id'])).execute(); st.rerun()
+            if st.button("🗑️ Deletar", key=f"p_d_{pr['id']}"):
+                supabase.table("produtos").delete().eq("id", int(pr['id'])).execute(); st.rerun()
 
 st.markdown('<div class="footer">Desenvolvido por tmanga</div>', unsafe_allow_html=True)
