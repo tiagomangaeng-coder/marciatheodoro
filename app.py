@@ -5,7 +5,6 @@ import plotly.express as px
 from datetime import datetime, date, timedelta
 import time
 from fpdf import FPDF
-import io
 
 # --- 1. CONFIGURAÇÃO E ESTILO ---
 st.set_page_config(page_title="Marcia Theodoro - Gestão Pro", page_icon="👗", layout="wide")
@@ -45,7 +44,7 @@ def get_data(tabela):
     res = supabase.table(tabela).select("*").execute()
     return pd.DataFrame(res.data)
 
-# --- 4. FUNÇÕES DE PDF ---
+# --- 4. FUNÇÕES DE PDF (DATAS FORMATADAS) ---
 def gerar_pdf_financeiro_geral(df_clientes, df_parcelas):
     pdf = FPDF()
     pdf.add_page()
@@ -53,10 +52,10 @@ def gerar_pdf_financeiro_geral(df_clientes, df_parcelas):
     pdf.set_text_color(139, 94, 60)
     pdf.cell(0, 10, "RELATÓRIO FINANCEIRO GERAL DE CLIENTES", ln=True, align='C')
     pdf.set_font("helvetica", '', 10)
+    # Data no padrão brasileiro
     pdf.cell(0, 10, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align='C')
     pdf.ln(5)
     
-    # Cabeçalho da Tabela
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("helvetica", 'B', 10)
     pdf.cell(80, 10, "Nome do Cliente", 1, 0, 'C', True)
@@ -65,12 +64,10 @@ def gerar_pdf_financeiro_geral(df_clientes, df_parcelas):
     
     pdf.set_font("helvetica", '', 10)
     for _, cli in df_clientes.sort_values('nome').iterrows():
-        # Calcula dívida total do cliente
         divida = df_parcelas[(df_parcelas['cliente_id'] == cli['id']) & (df_parcelas['pago'] == False)]['valor_parcela'].sum()
         pdf.cell(80, 10, str(cli['nome']), 1)
         pdf.cell(50, 10, str(cli['telefone']), 1)
         pdf.cell(60, 10, f"{divida:,.2f}", 1, 1, 'R')
-        
     return bytes(pdf.output())
 
 def gerar_pdf_cliente(nome, df_parc):
@@ -82,7 +79,9 @@ def gerar_pdf_cliente(nome, df_parc):
     pdf.set_font("helvetica", '', 12)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 10, f"Cliente: {nome}", ln=True)
+    pdf.cell(0, 10, f"Emissão: {datetime.now().strftime('%d/%m/%Y')}", ln=True)
     pdf.ln(5)
+    
     pdf.set_fill_color(240, 240, 240)
     pdf.cell(40, 10, "Vencimento", 1, 0, 'C', True)
     pdf.cell(80, 10, "Parcela", 1, 0, 'C', True)
@@ -91,7 +90,9 @@ def gerar_pdf_cliente(nome, df_parc):
     
     total_devedor = 0
     for _, r in df_parc.iterrows():
-        pdf.cell(40, 10, str(r['data_vencimento']), 1, 0, 'C')
+        # Formata data para o PDF
+        data_br = pd.to_datetime(r['data_vencimento']).strftime('%d/%m/%Y')
+        pdf.cell(40, 10, data_br, 1, 0, 'C')
         pdf.cell(80, 10, f"Parc {r['numero_parcela']}", 1, 0, 'C')
         pdf.cell(30, 10, f"R$ {r['valor_parcela']:.2f}", 1, 0, 'C')
         pdf.cell(40, 10, "PAGO" if r['pago'] else "PENDENTE", 1, 1, 'C')
@@ -114,6 +115,7 @@ tab_dash, tab_venda, tab_financeiro, tab_clientes, tab_estoque = st.tabs(["📊 
 # --- ABA: DASHBOARD ---
 with tab_dash:
     st.header("📊 Análise de Desempenho")
+    # Calendário já segue o padrão do sistema (Streamlit adapta ao navegador)
     periodo = st.date_input("Filtrar Período", value=(date.today() - timedelta(days=30), date.today()))
     
     if len(periodo) == 2:
@@ -136,23 +138,19 @@ with tab_dash:
         with col2:
             st.plotly_chart(px.pie(df_vf, values='valor', names='metodo_pagamento', title="Métodos", hole=0.3), use_container_width=True)
 
-# --- ABA: FINANCEIRO (ATUALIZADA) ---
+# --- ABA: FINANCEIRO (DATAS PADRÃO BR) ---
 with tab_financeiro:
     st.header("📉 Gestão Financeira")
     
-    # NOVA OPÇÃO: RELATÓRIO GERAL DE CLIENTES NO FINANCEIRO
-    st.subheader("📋 Relatórios Consolidados")
     if not df_clientes.empty:
         pdf_geral_fin = gerar_pdf_financeiro_geral(df_clientes, df_parcelas)
         st.download_button("📥 Baixar Relatório Financeiro Geral (Todos os Clientes)", 
                            data=pdf_geral_fin, 
-                           file_name="financeiro_geral_clientes.pdf", 
+                           file_name=f"financeiro_geral_{datetime.now().strftime('%d_%m_%Y')}.pdf", 
                            mime="application/pdf")
     
     st.divider()
     
-    # Extrato Individual e Baixas
-    st.subheader("👤 Extrato Individual e Baixas")
     if not df_parcelas.empty and not df_clientes.empty:
         df_f = pd.merge(df_parcelas, df_clientes[['id', 'nome']], left_on='cliente_id', right_on='id', how='left', suffixes=('_p', '_c'))
         cli_sel = st.selectbox("Escolha o Cliente", ["--"] + list(df_clientes['nome'].unique()))
@@ -162,12 +160,14 @@ with tab_financeiro:
             st.download_button("📥 Baixar PDF Individual", gerar_pdf_cliente(cli_sel, df_cli), f"extrato_{cli_sel}.pdf")
             
             for _, r in df_cli.iterrows():
+                # Formatação da data para exibição na tela
+                data_br = pd.to_datetime(r['data_vencimento']).strftime('%d/%m/%Y')
                 c1, c2 = st.columns([3, 1])
-                c1.write(f"Venc: {r['data_vencimento']} | Parc {r['numero_parcela']} | **R$ {r['valor_parcela']:.2f}** | {'✅ PAGO' if r['pago'] else '⏳ PENDENTE'}")
+                c1.write(f"Venc: {data_br} | Parc {r['numero_parcela']} | **R$ {r['valor_parcela']:.2f}** | {'✅ PAGO' if r['pago'] else '⏳ PENDENTE'}")
                 if not r['pago'] and c2.button("Baixa", key=f"bx_{r['id_p']}"):
                     supabase.table("parcelas").update({"pago": True}).eq("id", r['id_p']).execute(); st.rerun()
 
-# --- DEMAIS ABAS (VENDA, CLIENTES, ESTOQUE) ---
+# --- ABA: VENDA ---
 with tab_venda:
     st.header("🛒 Ponto de Venda")
     colv1, colv2 = st.columns([1, 2])
@@ -191,9 +191,24 @@ with tab_venda:
                 par = st.number_input("Parcelas", min_value=1, value=1)
                 dat = st.date_input("1º Vencimento", value=date.today())
                 if st.form_submit_button("✅ FINALIZAR"):
-                    # Lógica de salvar (venda, parcelas, estoque) omitida aqui por brevidade, manter a lógica anterior
+                    total_v = sum(i['valor_total'] for i in st.session_state.carrinho)
+                    v_res = supabase.table("vendas").insert({"item": str(st.session_state.carrinho), "valor": total_v, "metodo_pagamento": met}).execute()
+                    v_id = v_res.data[0]['id']
+                    
+                    for i in range(par):
+                        venc_calc = pd.to_datetime(dat) + pd.DateOffset(months=i)
+                        supabase.table("parcelas").insert({
+                            "venda_id": v_id, 
+                            "cliente_id": df_clientes[df_clientes['nome']==cli_v]['id'].values[0],
+                            "valor_parcela": total_v/par,
+                            "data_vencimento": venc_calc.strftime('%Y-%m-%d'),
+                            "pago": True if met in ["Pix", "Dinheiro"] else False,
+                            "numero_parcela": i+1,
+                            "metodo_pagamento": met
+                        }).execute()
                     st.success("Venda realizada!"); st.session_state.carrinho = []; st.rerun()
 
+# --- DEMAIS ABAS ---
 with tab_clientes:
     st.header("👤 Clientes")
     with st.form("c_cli"):
@@ -205,9 +220,8 @@ with tab_clientes:
 with tab_estoque:
     st.header("📦 Estoque")
     with st.form("c_est"):
-        e1, e2 = st.columns(2)
-        cp = e1.text_input("Cód")
-        np = e2.text_input("Peça")
+        cp = st.text_input("Cód")
+        np = st.text_input("Peça")
         pv = st.number_input("Preço")
         qi = st.number_input("Qtd")
         if st.form_submit_button("Cadastrar"):
