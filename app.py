@@ -56,7 +56,7 @@ def load_data():
     except:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# --- 4. FUNÇÃO PDF CORRIGIDA ---
+# --- 4. FUNÇÃO PDF ---
 def gerar_pdf_financeiro(df_cli, df_parc, tipo="Consolidado"):
     pdf = FPDF()
     pdf.add_page()
@@ -69,48 +69,30 @@ def gerar_pdf_financeiro(df_cli, df_parc, tipo="Consolidado"):
     pdf.ln(5)
 
     if tipo == "Consolidado":
-        # Cabeçalho da tabela resumida
         pdf.set_fill_color(240, 240, 240)
         pdf.set_font("helvetica", 'B', 10)
         pdf.cell(80, 10, "Cliente", 1, 0, 'C', True)
         pdf.cell(50, 10, "WhatsApp", 1, 0, 'C', True)
         pdf.cell(60, 10, "Pendente Total (R$)", 1, 1, 'C', True)
         pdf.set_font("helvetica", '', 10)
-        
         for _, cli in df_cli.iterrows():
             dev = df_parc[(df_parc['cliente_id'] == cli['id']) & (df_parc['pago'] == False)]['valor_parcela'].sum() if not df_parc.empty else 0
             if dev > 0:
-                pdf.cell(80, 10, str(cli['nome']), 1)
-                pdf.cell(50, 10, str(cli['telefone']), 1)
-                pdf.cell(60, 10, f"{dev:,.2f}", 1, 1, 'R')
+                pdf.cell(80, 10, str(cli['nome']), 1); pdf.cell(50, 10, str(cli['telefone']), 1); pdf.cell(60, 10, f"{dev:,.2f}", 1, 1, 'R')
     else:
-        # RELATÓRIO COMPLETO: Detalhamento por cliente
         for _, cli in df_cli.iterrows():
             parc_cli = df_parc[df_parc['cliente_id'] == cli['id']].sort_values('data_vencimento') if not df_parc.empty else pd.DataFrame()
-            
             if not parc_cli.empty:
-                pdf.set_font("helvetica", 'B', 12)
-                pdf.set_text_color(139, 94, 60)
-                pdf.cell(0, 10, f"EXTRATO: {cli['nome']}", ln=True)
-                pdf.set_font("helvetica", 'B', 9)
-                pdf.set_text_color(0, 0, 0)
-                pdf.set_fill_color(245, 245, 245)
-                
-                # Cabeçalho da sub-tabela
-                pdf.cell(35, 8, "Vencimento", 1, 0, 'C', True)
-                pdf.cell(75, 8, "Descrição da Parcela", 1, 0, 'C', True)
-                pdf.cell(35, 8, "Valor (R$)", 1, 0, 'C', True)
-                pdf.cell(45, 8, "Status", 1, 1, 'C', True)
-                
+                pdf.set_font("helvetica", 'B', 12); pdf.set_text_color(139, 94, 60); pdf.cell(0, 10, f"EXTRATO: {cli['nome']}", ln=True)
+                pdf.set_font("helvetica", 'B', 9); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(245, 245, 245)
+                pdf.cell(35, 8, "Vencimento", 1, 0, 'C', True); pdf.cell(75, 8, "Parcela", 1, 0, 'C', True); pdf.cell(35, 8, "Valor", 1, 0, 'C', True); pdf.cell(45, 8, "Status", 1, 1, 'C', True)
                 pdf.set_font("helvetica", '', 9)
                 for _, p in parc_cli.iterrows():
-                    dt = pd.to_datetime(p['data_vencimento']).strftime('%d/%m/%Y')
-                    status = "PAGO" if p['pago'] else "PENDENTE"
-                    pdf.cell(35, 8, dt, 1, 0, 'C')
+                    pdf.cell(35, 8, pd.to_datetime(p['data_vencimento']).strftime('%d/%m/%Y'), 1, 0, 'C')
                     pdf.cell(75, 8, f"Parcela {p['numero_parcela']}", 1)
                     pdf.cell(35, 8, f"{p['valor_parcela']:.2f}", 1, 0, 'R')
-                    pdf.cell(45, 8, status, 1, 1, 'C')
-                pdf.ln(5) # Espaço entre clientes
+                    pdf.cell(45, 8, "PAGO" if p['pago'] else "PENDENTE", 1, 1, 'C')
+                pdf.ln(5)
     return bytes(pdf.output())
 
 # --- 5. CARREGAMENTO ---
@@ -125,35 +107,23 @@ with tab_dash:
     col_f1, col_f2 = st.columns(2)
     data_inicio = col_f1.date_input("Início do Período", value=date.today() - timedelta(days=30))
     data_fim = col_f2.date_input("Fim do Período", value=date.today() + timedelta(days=90))
-    
     if not df_v.empty:
         df_v['data_dt'] = pd.to_datetime(df_v['data']).dt.date
         df_v_filtrado = df_v[(df_v['data_dt'] >= data_inicio) & (df_v['data_dt'] <= data_fim)]
         df_par['venc_dt'] = pd.to_datetime(df_par['data_vencimento']).dt.date
         df_par_filtrado = df_par[(df_par['venc_dt'] >= data_inicio) & (df_par['venc_dt'] <= data_fim)]
-
         m1, m2, m3 = st.columns(3)
         m1.metric("Faturamento", f"R$ {df_v_filtrado['valor'].sum():,.2f}")
         m2.metric("Já Recebido", f"R$ {df_par_filtrado[df_par_filtrado['pago'] == True]['valor_parcela'].sum():,.2f}")
         m3.metric("A Receber", f"R$ {df_par_filtrado[df_par_filtrado['pago'] == False]['valor_parcela'].sum():,.2f}")
-        
-        st.divider()
-        g1, g2 = st.columns([2, 1])
-        with g1:
-            st.subheader("📈 Previsão de Entradas")
-            df_par['Mês/Ano'] = pd.to_datetime(df_par['data_vencimento']).dt.strftime('%m/%Y')
-            fluxo = df_par[df_par['pago'] == False].groupby('Mês/Ano')['valor_parcela'].sum().reset_index()
-            if not fluxo.empty:
-                st.plotly_chart(px.bar(fluxo, x='Mês/Ano', y='valor_parcela', color_discrete_sequence=['#a68a64']), use_container_width=True)
-        with g2:
-            st.subheader("💳 Métodos")
-            st.plotly_chart(px.pie(df_v_filtrado, values='valor', names='metodo_pagamento', color_discrete_sequence=['#8b5e3c', '#a68a64']), use_container_width=True)
 
-# --- ABA VENDAS ---
+# --- ABA VENDAS (AGORA COM OPÇÕES DE EDITAR/REMOVER) ---
 with tab_venda:
     st.header("🛍️ Realizar Venda")
     c1, col_carrinho = st.columns([1, 1.5])
+    
     with c1:
+        st.subheader("Adicionar ao Carrinho")
         if not df_p.empty:
             list_p = [f"{r['codigo']} - {r['nome']}" for _, r in df_p.iterrows()]
             sel_p = st.selectbox("Produto", list_p)
@@ -164,11 +134,32 @@ with tab_venda:
                 if qt_v <= peca['quantidade_estoque']:
                     st.session_state.carrinho.append({"cod": peca['codigo'], "nome": peca['nome'], "qtd": int(qt_v), "pr": float(pr_u), "tot": float(pr_u * qt_v)})
                     st.rerun()
-                else: st.error("Estoque baixo!")
+                else: st.error(f"Estoque insuficiente! Disponível: {int(peca['quantidade_estoque'])}")
+    
     with col_carrinho:
+        st.subheader("Itens da Venda")
         if st.session_state.carrinho:
             st.table(pd.DataFrame(st.session_state.carrinho)[['nome', 'qtd', 'pr', 'tot']])
-            with st.form("fechar"):
+            
+            # --- BLOCO DE EDIÇÃO/REMOÇÃO (REINSERIDO) ---
+            with st.expander("🔧 Editar ou Remover Item do Carrinho"):
+                idx_edit = st.selectbox("Qual item deseja alterar?", range(len(st.session_state.carrinho)), format_func=lambda x: st.session_state.carrinho[x]['nome'])
+                col_e1, col_e2 = st.columns(2)
+                nova_qtd = col_e1.number_input("Nova Qtd", value=st.session_state.carrinho[idx_edit]['qtd'], key="edit_q")
+                novo_pr = col_e2.number_input("Novo Preço", value=st.session_state.carrinho[idx_edit]['pr'], key="edit_p")
+                
+                b_up, b_rm = st.columns(2)
+                if b_up.button("🔄 Atualizar Item"):
+                    st.session_state.carrinho[idx_edit]['qtd'] = int(nova_qtd)
+                    st.session_state.carrinho[idx_edit]['pr'] = float(novo_pr)
+                    st.session_state.carrinho[idx_edit]['tot'] = float(nova_qtd * novo_pr)
+                    st.rerun()
+                if b_rm.button("❌ Remover Item"):
+                    st.session_state.carrinho.pop(idx_edit)
+                    st.rerun()
+
+            st.divider()
+            with st.form("fechar_venda"):
                 cli_v = st.selectbox("Cliente", list(df_c['nome'].unique()) if not df_c.empty else ["Nenhum"])
                 met = st.selectbox("Método", ["Crediário", "Pix", "Dinheiro", "Cartão"])
                 par = st.number_input("Parcelas", min_value=1, value=1)
@@ -185,21 +176,19 @@ with tab_venda:
                         st_at = int(res_p.data[0]['quantidade_estoque'])
                         supabase.table("produtos").update({"quantidade_estoque": st_at - item['qtd']}).eq("codigo", item['cod']).execute()
                     st.session_state.carrinho = []; st.success("Venda salva!"); time.sleep(1); st.rerun()
+        else: st.info("Carrinho vazio.")
 
-# --- ABA FINANCEIRO (COM OS BOTÕES CORRETOS) ---
+# --- ABA FINANCEIRO (COM BOTÕES GERAL E INDIVIDUAL) ---
 with tab_financeiro:
     st.header("📉 Gestão Financeira")
     st.subheader("📋 Relatórios Gerais")
     if not df_c.empty:
-        tipo_r = st.radio("Selecione o relatório para baixar:", ["Consolidado", "Completo"], horizontal=True)
-        pdf_geral = gerar_pdf_financeiro(df_c, df_par, tipo_r)
-        st.download_button(f"📥 Baixar Relatório {tipo_r}", data=pdf_geral, file_name=f"relatorio_{tipo_r.lower()}.pdf", mime="application/pdf")
-    
+        tipo_r = st.radio("Selecione o relatório:", ["Consolidado", "Completo"], horizontal=True)
+        st.download_button(f"📥 Baixar Relatório {tipo_r}", data=gerar_pdf_financeiro(df_c, df_par, tipo_r), file_name=f"relatorio_{tipo_r.lower()}.pdf")
     st.divider()
-    cli_f = st.selectbox("Extrato por Cliente", ["--"] + list(df_c['nome'].unique()) if not df_c.empty else ["--"])
+    cli_f = st.selectbox("Extrato Individual", ["--"] + list(df_c['nome'].unique()) if not df_c.empty else ["--"])
     if cli_f != "--":
-        pdf_ind = gerar_pdf_financeiro(df_c[df_c['nome'] == cli_f], df_par, "Completo")
-        st.download_button(f"📥 Baixar Extrato Detalhado de {cli_f}", data=pdf_ind, file_name=f"extrato_{cli_f}.pdf")
+        st.download_button(f"📥 Baixar Extrato de {cli_f}", data=gerar_pdf_financeiro(df_c[df_c['nome'] == cli_f], df_par, "Completo"), file_name=f"extrato_{cli_f}.pdf")
         df_f = pd.merge(df_par, df_c[['id', 'nome']], left_on='cliente_id', right_on='id', suffixes=('_p', '_c'))
         df_cli_p = df_f[df_f['nome'] == cli_f].sort_values('data_vencimento')
         for _, r in df_cli_p.iterrows():
@@ -219,9 +208,7 @@ with tab_clientes:
             if n: supabase.table("clientes").insert({"nome": n, "telefone": t, "cpf": cp}).execute(); st.rerun()
     for _, cli in df_c.iterrows():
         with st.expander(f"Editar: {cli['nome']}"):
-            en = st.text_input("Nome", cli['nome'], key=f"cn_{cli['id']}")
-            et = st.text_input("Whats", cli['telefone'], key=f"ct_{cli['id']}")
-            ec = st.text_input("CPF", cli.get('cpf', ''), key=f"cc_{cli['id']}")
+            en, et, ec = st.text_input("Nome", cli['nome'], key=f"cn_{cli['id']}"), st.text_input("Whats", cli['telefone'], key=f"ct_{cli['id']}"), st.text_input("CPF", cli.get('cpf',''), key=f"cc_{cli['id']}")
             if st.button("💾 Atualizar", key=f"cu_{cli['id']}"):
                 supabase.table("clientes").update({"nome": en, "telefone": et, "cpf": ec}).eq("id", int(cli['id'])).execute(); st.rerun()
             if st.button("🗑️ Excluir", key=f"cd_{cli['id']}"):
@@ -236,11 +223,10 @@ with tab_estoque:
         if st.form_submit_button("Cadastrar"):
             if c_p: supabase.table("produtos").insert({"codigo": str(c_p), "nome": str(n_p), "preco_venda": float(pr_p), "quantidade_estoque": int(q_p)}).execute(); st.rerun()
     for _, pr in df_p.iterrows():
-        with st.expander(f"{pr['codigo']} - {pr['nome']}"):
-            n_p = st.text_input("Nome", pr['nome'], key=f"p_n_{pr['id']}")
-            q_p = st.number_input("Estoque", value=int(pr['quantidade_estoque']), key=f"p_q_{pr['id']}")
+        with st.expander(f"{pr['codigo']} - {pr['nome']} ({int(pr['quantidade_estoque'])} un)"):
+            nn, nq = st.text_input("Nome", pr['nome'], key=f"p_n_{pr['id']}"), st.number_input("Estoque", value=int(pr['quantidade_estoque']), key=f"p_q_{pr['id']}")
             if st.button("💾 Salvar", key=f"p_u_{pr['id']}"):
-                supabase.table("produtos").update({"nome": n_p, "quantidade_estoque": int(q_p)}).eq("id", int(pr['id'])).execute(); st.rerun()
+                supabase.table("produtos").update({"nome": nn, "quantidade_estoque": int(nq)}).eq("id", int(pr['id'])).execute(); st.rerun()
             if st.button("🗑️ Deletar", key=f"p_d_{pr['id']}"):
                 supabase.table("produtos").delete().eq("id", int(pr['id'])).execute(); st.rerun()
 
