@@ -4,154 +4,185 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Marcia Theodoro - Livro Caixa",
+    page_title="Marcia Theodoro - Gestão de Vendas",
     page_icon="👗",
     layout="wide"
 )
 
-# --- 2. CONEXÃO SEGURA COM SUPABASE ---
+# --- CONEXÃO COM SUPABASE ---
 def init_connection():
     try:
-        # Verifica se os campos existem nos Secrets
-        if "SUPABASE_URL" not in st.secrets or "SUPABASE_KEY" not in st.secrets:
-            st.error("❌ Erro: Chaves SUPABASE_URL ou SUPABASE_KEY não encontradas nos Secrets do Streamlit.")
-            st.info("💡 Vá em Settings > Secrets e adicione suas credenciais.")
-            st.stop()
-        
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets["SUPABASE_KEY"]
-
-        # Validação de URL para evitar o erro "Invalid URL"
-        if not url.startswith("https://"):
-            st.error("❌ Erro: A URL do Supabase deve começar com 'https://'. Verifique seus Secrets.")
-            st.stop()
-
         return create_client(url, key)
     except Exception as e:
-        st.error(f"❌ Erro crítico de conexão: {e}")
+        st.error("Erro de conexão. Verifique os Secrets no Streamlit Cloud.")
         st.stop()
 
 supabase = init_connection()
 
-# --- 3. ESTILO VISUAL (CSS) ---
+# --- ESTILO CSS ---
 st.markdown("""
     <style>
     .main { background-color: #fcfaf8; }
-    [data-testid="stMetricValue"] { color: #8b5e3c; font-weight: bold; }
-    .stButton>button { 
-        background-color: #8b5e3c; 
-        color: white; 
-        border-radius: 8px;
-        width: 100%;
-    }
-    .stDataFrame { border-radius: 10px; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #f1f1f1; border-radius: 5px; padding: 10px; }
+    .stTabs [aria-selected="true"] { background-color: #8b5e3c !important; color: white !important; }
+    div[data-testid="stMetricValue"] { color: #8b5e3c; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. FUNÇÕES DE BANCO DE DADOS ---
-def get_vendas():
-    # Busca todas as vendas ordenadas pela data mais recente
+# --- FUNÇÕES DE DADOS ---
+def listar_produtos():
+    res = supabase.table("produtos").select("*").order("codigo").execute()
+    return pd.DataFrame(res.data)
+
+def listar_vendas():
     res = supabase.table("vendas").select("*").order("data", desc=True).execute()
     return pd.DataFrame(res.data)
 
-def add_venda(item, valor, metodo, obs):
-    nova_venda = {
-        "item": item,
-        "valor": valor,
-        "metodo_pagamento": metodo,
-        "observacao": obs,
-        "data": datetime.now().isoformat()
-    }
-    supabase.table("vendas").insert(nova_venda).execute()
+# --- INTERFACE PRINCIPAL ---
+st.title("👗 Marcia Theodoro - Sistema de Gestão")
 
-# --- 5. INTERFACE - BARRA LATERAL (CADASTRO) ---
-with st.sidebar:
-    st.title("👗 Marcia Theodoro")
-    st.markdown("---")
-    st.header("Registrar Nova Venda")
+aba_vendas, aba_estoque, aba_relatorios = st.tabs([
+    "💰 Registrar Venda", 
+    "📦 Cadastro de Mercadoria", 
+    "📊 Relatórios e Gráficos"
+])
+
+# --- ABA 2: CADASTRO DE MERCADORIA ---
+with aba_estoque:
+    st.header("Gerenciamento de Estoque")
+    df_produtos = listar_produtos()
     
-    with st.form("form_venda", clear_on_submit=True):
-        item = st.text_input("Descrição da Peça", placeholder="Ex: Blusa Seda Branca")
-        valor = st.number_input("Valor (R$)", min_value=0.0, step=0.01, format="%.2f")
-        metodo = st.selectbox("Forma de Pagamento", ["Pix", "Crédito", "Débito", "Dinheiro"])
-        obs = st.text_area("Observações adicionais")
+    col_cad, col_list = st.columns([1, 2])
+    
+    with col_cad:
+        st.subheader("Novo Item")
+        # Lógica para o próximo código 001, 002...
+        proximo_cod = str(len(df_produtos) + 1).zfill(3)
         
-        submit = st.form_submit_button("Confirmar Venda")
-    
-    if submit:
-        if item and valor > 0:
-            with st.spinner("Salvando..."):
-                add_venda(item, valor, metodo, obs)
-                st.success("Venda registrada!")
-                st.rerun()
+        with st.form("form_prod", clear_on_submit=True):
+            st.info(f"Código do Produto: **{proximo_cod}**")
+            nome_p = st.text_input("Nome da Peça")
+            preco_p = st.number_input("Preço de Venda (R$)", min_value=0.0, format="%.2f")
+            qtd_p = st.number_input("Quantidade em Estoque", min_value=0, step=1)
+            
+            if st.form_submit_button("Salvar Produto"):
+                if nome_p and preco_p > 0:
+                    supabase.table("produtos").insert({
+                        "codigo": proximo_cod,
+                        "nome": nome_p,
+                        "preco_venda": preco_p,
+                        "quantidade_estoque": qtd_p
+                    }).execute()
+                    st.success(f"Item {proximo_cod} cadastrado!")
+                    st.rerun()
+                else:
+                    st.error("Preencha o nome e o preço corretamente.")
+
+    with col_list:
+        st.subheader("Itens Cadastrados")
+        if not df_produtos.empty:
+            st.dataframe(
+                df_produtos[['codigo', 'nome', 'preco_venda', 'quantidade_estoque']],
+                column_config={
+                    "codigo": "Cód",
+                    "nome": "Descrição",
+                    "preco_venda": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
+                    "quantidade_estoque": "Estoque"
+                },
+                hide_index=True,
+                use_container_width=True
+            )
         else:
-            st.warning("Por favor, preencha o item e o valor.")
+            st.info("Nenhum produto cadastrado.")
 
-# --- 6. PAINEL PRINCIPAL (DASHBOARD) ---
-st.title("📊 Livro Caixa Digital")
-st.markdown("Controle de fluxo de caixa da loja em tempo real.")
+# --- ABA 1: REGISTRAR VENDA ---
+with aba_vendas:
+    st.header("Nova Venda")
+    
+    if df_produtos.empty:
+        st.warning("⚠️ Você precisa cadastrar produtos na aba de estoque antes de vender.")
+    else:
+        with st.form("form_venda", clear_on_submit=True):
+            col_v1, col_v2 = st.columns(2)
+            
+            # Criar lista para o seletor: "001 - Camisa Seda"
+            lista_opcoes = [f"{r['codigo']} - {r['nome']}" for _, r in df_produtos.iterrows()]
+            item_selecionado = col_v1.selectbox("Selecione o Produto", options=lista_opcoes)
+            
+            # Pegar dados do produto selecionado para sugerir preço e validar estoque
+            cod_sel = item_selecionado.split(" - ")[0]
+            prod_info = df_produtos[df_produtos['codigo'] == cod_sel].iloc[0]
+            
+            metodo = col_v2.selectbox("Forma de Pagamento", ["Pix", "Crédito", "Débito", "Dinheiro"])
+            
+            valor_venda = st.number_input("Preço Final (R$)", value=float(prod_info['preco_venda']), format="%.2f")
+            obs_venda = st.text_area("Observações (Tamanho, Cor, Cliente, etc.)")
+            
+            if st.form_submit_button("Finalizar Venda"):
+                if prod_info['quantidade_estoque'] > 0:
+                    # 1. Registra a Venda
+                    supabase.table("vendas").insert({
+                        "item": item_selecionado,
+                        "valor": valor_venda,
+                        "metodo_pagamento": metodo,
+                        "observacao": obs_venda
+                    }).execute()
+                    
+                    # 2. Baixa no Estoque
+                    nova_qtd = int(prod_info['quantidade_estoque']) - 1
+                    supabase.table("produtos").update({"quantidade_estoque": nova_qtd}).eq("codigo", cod_sel).execute()
+                    
+                    st.success(f"Venda confirmada! Estoque atual de {prod_info['nome']}: {nova_qtd}")
+                    st.rerun()
+                else:
+                    st.error(f"Estoque insuficiente de {prod_info['nome']}!")
 
-df = get_vendas()
-
-if not df.empty:
-    # Tratamento das datas
-    df['data'] = pd.to_datetime(df['data'])
-    df['data_display'] = df['data'].dt.strftime('%d/%m/%Y %H:%M')
-    
-    # --- MÉTRICAS ---
-    total_receita = df['valor'].sum()
-    total_itens = len(df)
-    ticket_medio = total_receita / total_itens if total_itens > 0 else 0
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Faturamento Total", f"R$ {total_receita:,.2f}")
-    col2.metric("Vendas Realizadas", total_itens)
-    col3.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}")
-    
     st.markdown("---")
+    st.subheader("Últimos Lançamentos")
+    df_vendas = listar_vendas()
+    if not df_vendas.empty:
+        df_vendas['data_f'] = pd.to_datetime(df_vendas['data']).dt.strftime('%d/%m/%Y %H:%M')
+        st.dataframe(df_vendas[['data_f', 'item', 'valor', 'metodo_pagamento']], use_container_width=True, hide_index=True)
+
+# --- ABA 3: RELATÓRIOS E GRÁFICOS ---
+with aba_relatorios:
+    st.header("Análise de Resultados")
     
-    # --- GRÁFICOS ---
-    g_col1, g_col2 = st.columns(2)
-    
-    with g_col1:
-        st.subheader("Vendas por Categoria")
-        fig_pizza = px.pie(df, values='valor', names='metodo_pagamento', 
-                           hole=0.4, color_discrete_sequence=px.colors.qualitative.Antique)
-        st.plotly_chart(fig_pizza, use_container_width=True)
+    if not df_vendas.empty:
+        total_venda = df_vendas['valor'].sum()
+        num_vendas = len(df_vendas)
         
-    with g_col2:
-        st.subheader("Evolução das Vendas")
-        # Agrupa por dia para o gráfico de linha
-        df_evolucao = df.groupby(df['data'].dt.date)['valor'].sum().reset_index()
-        fig_linha = px.line(df_evolucao, x='data', y='valor', markers=True,
-                            line_shape='spline', labels={'data': 'Data', 'valor': 'Total (R$)'})
-        fig_linha.update_traces(line_color='#8b5e3c')
-        st.plotly_chart(fig_linha, use_container_width=True)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Faturamento Acumulado", f"R$ {total_venda:,.2f}")
+        c2.metric("Total de Peças Vendidas", num_vendas)
+        c3.metric("Ticket Médio", f"R$ {(total_venda/num_vendas):,.2f}")
+        
+        st.markdown("---")
+        
+        col_g1, col_g2 = st.columns(2)
+        
+        with col_g1:
+            # Gráfico de Meios de Pagamento
+            fig_metodo = px.pie(df_vendas, values='valor', names='metodo_pagamento', 
+                                title="Vendas por Tipo de Pagamento", hole=0.3,
+                                color_discrete_sequence=px.colors.qualitative.Antique)
+            st.plotly_chart(fig_metodo, use_container_width=True)
+            
+        with col_g2:
+            # Gráfico de evolução diária
+            df_vendas['data_dia'] = pd.to_datetime(df_vendas['data']).dt.date
+            faturamento_diario = df_vendas.groupby('data_dia')['valor'].sum().reset_index()
+            fig_linha = px.line(faturamento_diario, x='data_dia', y='valor', title="Evolução das Vendas",
+                                markers=True, labels={'data_dia': 'Data', 'valor': 'Total (R$)'})
+            fig_linha.update_traces(line_color='#8b5e3c')
+            st.plotly_chart(fig_linha, use_container_width=True)
+    else:
+        st.info("Aguardando vendas para gerar relatórios.")
 
-    # --- TABELA DE LANÇAMENTOS ---
-    st.subheader("📝 Histórico de Lançamentos")
-    st.dataframe(
-        df[['data_display', 'item', 'valor', 'metodo_pagamento', 'observacao']],
-        column_config={
-            "data_display": "Data e Hora",
-            "item": "Produto",
-            "valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-            "metodo_pagamento": "Pagamento",
-            "observacao": "Notas"
-        },
-        use_container_width=True,
-        hide_index=True
-    )
-    
-    # Botão para baixar em Excel/CSV
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Baixar Relatório (CSV)", data=csv, file_name="vendas_marcia_theodoro.csv", mime='text/csv')
-
-else:
-    st.info("Nenhuma venda encontrada no sistema. Comece registrando uma venda na barra lateral.")
-
-# --- RODAPÉ ---
-st.markdown("---")
-st.caption(f"© {datetime.now().year} Marcia Theodoro Boutique | Sistema de Gestão Interna")
+# RODAPÉ
+st.caption(f"© {datetime.now().year} Marcia Theodoro - Sistema Desenvolvido para Gestão Interna")
