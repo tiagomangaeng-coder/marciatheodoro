@@ -58,48 +58,35 @@ def get_data(tabela):
 def gerar_pdf_cliente(nome, df_parc):
     pdf = FPDF()
     pdf.add_page()
-    
-    # Cabeçalho Elegante
     pdf.set_font("helvetica", 'B', 20)
     pdf.set_text_color(139, 94, 60) 
     pdf.cell(0, 15, "MÁRCIA THEODORO BOUTIQUE", ln=True, align='C')
-    
     pdf.set_font("helvetica", '', 12)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 10, f"Extrato de Conta - Cliente: {nome}", ln=True, align='C')
     pdf.cell(0, 5, f"Relatório gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align='C')
     pdf.ln(10)
-
-    # Cabeçalho da Tabela
     pdf.set_fill_color(241, 237, 233)
     pdf.set_font("helvetica", 'B', 10)
     pdf.cell(35, 10, "Vencimento", border=1, fill=True, align='C')
     pdf.cell(75, 10, "Descrição / Parcela", border=1, fill=True, align='C')
     pdf.cell(35, 10, "Valor", border=1, fill=True, align='C')
     pdf.cell(45, 10, "Situação", border=1, fill=True, align='C', ln=True)
-
     pdf.set_font("helvetica", '', 10)
     total_pendente = 0
-    
     for _, row in df_parc.iterrows():
         status = "RECEBIDO" if row['pago'] else "PENDENTE"
         venc = pd.to_datetime(row['data_vencimento']).strftime('%d/%m/%Y')
         valor = f"R$ {row['valor_parcela']:,.2f}"
-        
         pdf.cell(35, 10, venc, border=1, align='C')
         pdf.cell(75, 10, f"Parcela {row['numero_parcela']}", border=1)
         pdf.cell(35, 10, valor, border=1, align='R')
         pdf.cell(45, 10, status, border=1, align='C', ln=True)
-        
-        if not row['pago']:
-            total_pendente += row['valor_parcela']
-
+        if not row['pago']: total_pendente += row['valor_parcela']
     pdf.ln(5)
     pdf.set_font("helvetica", 'B', 12)
     pdf.set_text_color(139, 94, 60)
     pdf.cell(0, 10, f"SALDO TOTAL DEVEDOR: R$ {total_pendente:,.2f}", ln=True, align='R')
-    
-    # Retorna como bytes para o Streamlit aceitar
     return bytes(pdf.output())
 
 # --- 6. CARREGAMENTO DE DADOS ---
@@ -109,7 +96,7 @@ df_vendas = get_data("vendas")
 df_parcelas = get_data("parcelas")
 
 # --- 7. INTERFACE PRINCIPAL ---
-st.title("👗 Marcia Theodoro - Gestão Pro")
+st.title("👗 Marcia Theodoro - Sistema de Gestão Pro")
 
 tab_dash, tab_venda, tab_financeiro, tab_clientes, tab_estoque = st.tabs([
     "📊 Dashboard", "💰 Realizar Venda", "📉 Financeiro & PDF", "👤 Clientes", "📦 Estoque"
@@ -119,28 +106,23 @@ tab_dash, tab_venda, tab_financeiro, tab_clientes, tab_estoque = st.tabs([
 with tab_dash:
     st.header("Resumo Estratégico")
     if not df_parcelas.empty:
-        hoje = datetime.now().date()
         df_parcelas['data_vencimento'] = pd.to_datetime(df_parcelas['data_vencimento']).dt.date
+        hoje = datetime.now().date()
         recebido = df_parcelas[df_parcelas['pago'] == True]['valor_parcela'].sum()
         a_receber = df_parcelas[df_parcelas['pago'] == False]['valor_parcela'].sum()
         atrasado = df_parcelas[(df_parcelas['pago'] == False) & (df_parcelas['data_vencimento'] < hoje)]['valor_parcela'].sum()
-        
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Faturamento Bruto", f"R$ {df_vendas['valor'].sum():,.2f}" if not df_vendas.empty else "0,00")
         c2.metric("Total Recebido", f"R$ {recebido:,.2f}")
         c3.metric("Contas a Receber", f"R$ {a_receber:,.2f}")
         c4.metric("Inadimplência", f"R$ {atrasado:,.2f}", delta_color="inverse")
-    else:
-        st.info("Lance a primeira venda para ativar o dashboard.")
 
 # --- ABA: VENDAS (PREÇO AUTOMÁTICO E PARCELAMENTO) ---
 with tab_venda:
     st.header("💰 Nova Venda")
     if not df_produtos.empty and not df_clientes.empty:
-        # 1. Seleção do Produto (Fora do form para atualizar preço automático)
         lista_p = [f"{r['codigo']} - {r['nome']}" for _, r in df_produtos.iterrows()]
         prod_sel_txt = st.selectbox("1. Selecione a Mercadoria", lista_p)
-        
         cod_p = prod_sel_txt.split(" - ")[0]
         prod_data = df_produtos[df_produtos['codigo'] == cod_p].iloc[0]
         preco_sugerido = float(prod_data['preco_venda'])
@@ -151,18 +133,14 @@ with tab_venda:
             lista_c = {r['nome']: r['id'] for _, r in df_clientes.iterrows()}
             cliente_venda = c_v1.selectbox("2. Selecione o Cliente", list(lista_c.keys()))
             valor_final = c_v2.number_input("3. Valor da Venda (R$)", value=preco_sugerido)
-            
             c_v3, c_v4 = st.columns(2)
             metodo = c_v3.selectbox("4. Pagamento", ["Crediário", "Pix", "Dinheiro", "Cartão"])
             qtd_parc = c_v4.number_input("5. Parcelas", min_value=1, value=1)
-            
             data_inicial = st.date_input("6. Data do 1º Vencimento", value=datetime.now())
-            
             if st.form_submit_button("🛒 FINALIZAR"):
                 if estoque_atual > 0:
                     v_res = supabase.table("vendas").insert({"item": prod_sel_txt, "valor": valor_final, "metodo_pagamento": metodo}).execute()
                     v_id = v_res.data[0]['id']
-                    
                     valor_p = valor_final / qtd_parc
                     for i in range(qtd_parc):
                         venc = pd.to_datetime(data_inicial) + pd.DateOffset(months=i)
@@ -171,35 +149,33 @@ with tab_venda:
                             "venda_id": v_id, "cliente_id": lista_c[cliente_venda], "valor_parcela": valor_p,
                             "data_vencimento": venc.strftime('%Y-%m-%d'), "pago": pago_status, "numero_parcela": i+1, "metodo_pagamento": metodo
                         }).execute()
-                    
                     supabase.table("produtos").update({"quantidade_estoque": estoque_atual - 1}).eq("codigo", cod_p).execute()
                     st.success("Venda registrada!")
                     st.rerun()
-                else:
-                    st.error("Produto sem estoque!")
+                else: st.error("Produto sem estoque!")
 
-# --- ABA: FINANCEIRO & PDF ---
+# --- ABA: FINANCEIRO & PDF (CORREÇÃO DO KEYERROR AQUI) ---
 with tab_financeiro:
     st.header("📉 Extratos e Baixas")
-    if not df_parcelas.empty:
-        df_fin = pd.merge(df_parcelas, df_clientes[['id', 'nome']], left_on='cliente_id', right_on='id', how='left')
+    if not df_parcelas.empty and not df_clientes.empty:
+        # Merge explícito definindo sufixos para evitar ambiguidade na coluna 'id'
+        df_fin = pd.merge(
+            df_parcelas, 
+            df_clientes[['id', 'nome']], 
+            left_on='cliente_id', 
+            right_on='id', 
+            how='left',
+            suffixes=('_parcela', '_cliente')
+        )
         
         cli_sel = st.selectbox("Selecione o Cliente para Gerar PDF ou Dar Baixa", ["--"] + list(df_clientes['nome'].unique()))
         
         if cli_sel != "--":
             df_cli_parc = df_fin[df_fin['nome'] == cli_sel].sort_values('data_vencimento')
-            
-            # GERAÇÃO DO PDF SEM ERRO
             try:
                 pdf_bytes = gerar_pdf_cliente(cli_sel, df_cli_parc)
-                st.download_button(
-                    label="📥 Baixar Extrato em PDF",
-                    data=pdf_bytes,
-                    file_name=f"extrato_{cli_sel.replace(' ', '_')}.pdf",
-                    mime="application/pdf"
-                )
-            except Exception as e:
-                st.error(f"Erro ao gerar PDF: {e}")
+                st.download_button(label="📥 Baixar Extrato em PDF", data=pdf_bytes, file_name=f"extrato_{cli_sel.replace(' ', '_')}.pdf", mime="application/pdf")
+            except Exception as e: st.error(f"Erro ao gerar PDF: {e}")
             
             st.divider()
             for _, r in df_cli_parc.iterrows():
@@ -207,20 +183,20 @@ with tab_financeiro:
                 status_icon = "✅" if r['pago'] else "⏳"
                 col_x1.write(f"{status_icon} Parc {r['numero_parcela']} - Venc: {pd.to_datetime(r['data_vencimento']).strftime('%d/%m/%Y')} - **R$ {r['valor_parcela']:.2f}**")
                 if not r['pago']:
-                    if col_x2.button("Receber", key=f"btn_{r['id']}"):
-                        supabase.table("parcelas").update({"pago": True}).eq("id", r['id']).execute()
+                    # Corrigido: r['id'] virou r['id_parcela'] devido ao merge com sufixo
+                    if col_x2.button("Receber", key=f"btn_{r['id_parcela']}"):
+                        supabase.table("parcelas").update({"pago": True}).eq("id", r['id_parcela']).execute()
                         st.rerun()
 
 # --- ABA: CLIENTES ---
 with tab_clientes:
-    with st.form("cad_cliente_v5"):
+    with st.form("cad_cli_v5"):
         c1, c2, c3 = st.columns(3)
         n = c1.text_input("Nome")
         t = c2.text_input("Telefone")
         cp = c3.text_input("CPF")
         if st.form_submit_button("Salvar Cliente"):
-            supabase.table("clientes").insert({"nome": n, "telefone": t, "cpf": cp}).execute()
-            st.rerun()
+            supabase.table("clientes").insert({"nome": n, "telefone": t, "cpf": cp}).execute(); st.rerun()
     st.dataframe(df_clientes[['nome', 'telefone', 'cpf']], use_container_width=True, hide_index=True)
 
 # --- ABA: ESTOQUE ---
@@ -228,12 +204,9 @@ with tab_estoque:
     with st.form("cad_prod_v5"):
         e1, e2, e3, e4 = st.columns([1, 2, 1, 1])
         c_p = e1.text_input("Cód", value=str(len(df_produtos)+1).zfill(3))
-        n_p = e2.text_input("Peça")
-        p_p = e3.number_input("Preço")
-        q_p = e4.number_input("Qtd", min_value=0, step=1)
+        n_p = e2.text_input("Peça"); p_p = e3.number_input("Preço"); q_p = e4.number_input("Qtd", min_value=0, step=1)
         if st.form_submit_button("Cadastrar"):
-            supabase.table("produtos").insert({"codigo": c_p, "nome": n_p, "preco_venda": p_p, "quantidade_estoque": q_p}).execute()
-            st.rerun()
+            supabase.table("produtos").insert({"codigo": c_p, "nome": n_p, "preco_venda": p_p, "quantidade_estoque": q_p}).execute(); st.rerun()
     st.dataframe(df_produtos[['codigo', 'nome', 'preco_venda', 'quantidade_estoque']], use_container_width=True, hide_index=True)
 
 # --- RODAPÉ ---
